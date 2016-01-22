@@ -138,7 +138,7 @@ Pebble.addEventListener("showConfiguration", function() {
     var options = JSON.parse(localStorage.getItem('cas_ae_11w_opt'));
     console.log("read options: " + JSON.stringify(options));
     console.log("showing configuration");
-	var uri = 'http://panicman.github.io/config_casioae11w.html?title=Casio%20AE-11W%20v1.0';
+	var uri = 'http://panicman.github.io/config_casioae11w.html?title=Casio%20AE-11W%20v1.2';
     if (options !== null) {
         uri +=
 			'&c_inv=' + encodeURIComponent(options.c_inv) + 

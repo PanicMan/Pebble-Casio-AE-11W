@@ -69,7 +69,7 @@ static const GPathInfo MINUTE_HAND_POINTS = { 4, (GPoint []) { { -2, -43 }, { -2
 
 static const GPoint paHM1[] = { {71, 0}, {105, 1}, {142, 19}, {125, 59}, {142, 100}, {105, 119}, {71, 102}, {37, 119}, {1, 100}, {4, 59}, {1, 19}, {37, 1} };
 static const GPoint paHM2[] = { {72, 19}, {93, 22}, {114, 35}, {139, 60}, {114, 84}, {93, 97}, {72, 116}, {50, 97}, {29, 84}, {18,60}, {29, 35}, {50, 22} };
-static const GRect raHM1[] = { {{70, 0}, {4, 3}}, {{141, 59}, {3, 2}}, {{71, 118}, {2, 3}}, {{0, 59}, {3, 2}} };
+static const GRect raHM1[] = { {{70, 0}, {4, 3}}, {{141, 58}, {3, 4}}, {{70, 118}, {4, 3}}, {{0, 58}, {3, 4}} };
 
 static const uint32_t segments_bt[] = {100, 100, 100, 100, 400, 400, 100, 100, 100};
 static const VibePattern vibe_pat_bt = {
@@ -156,7 +156,8 @@ static void clock_update_proc(Layer *layer, GContext *ctx)
 		else
 		{
 			graphics_draw_line(ctx, paHM1[h], paHM2[h]);
-			graphics_fill_rect(ctx, GRect(paHM1[h].x-1, paHM1[h].y-1, 3, 3), 1, GCornersAll);
+			graphics_fill_circle(ctx, GPoint(paHM1[h].x, paHM1[h].y), 2);
+			//graphics_fill_rect(ctx, GRect(paHM1[h].x-2, paHM1[h].y-2, 4, 4), 1, GCornersAll);
 			graphics_context_set_fill_color(ctx, CfgData.inv ? GColorWhite : GColorBlack);
 			graphics_fill_rect(ctx, GRect(paHM2[h].x-1, paHM2[h].y-1, 3, 3), 1, GCornersAll);
 		}
@@ -329,12 +330,12 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 			graphics_draw_text(ctx, "!", WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2, rc.origin.y+rc.size.h/2-sz.h/2, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 			graphics_draw_text(ctx, "!", WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2+4, rc.origin.y+rc.size.h/2-sz.h/2-4, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 			
-			//Fill front Cloud
-			GBitmap *fb = graphics_capture_frame_buffer(ctx);
-			BitmapInfo bitmap_info = fill_bitmapinfo(fb);
-			fill4(bitmap_info, 141, 103, get_pixel(bitmap_info, 141, 103), get_pixel(bitmap_info, 136, 100));
-			fill4(bitmap_info, 147, 100, get_pixel(bitmap_info, 147, 100), get_pixel(bitmap_info, 136, 100));
-			graphics_release_frame_buffer(ctx, fb);
+			//Fill front Cloud, disabled, as it crash on real pebble
+			//itmap *fb = graphics_capture_frame_buffer(ctx);
+			//tmapInfo bitmap_info = fill_bitmapinfo(fb);
+			//fill4(bitmap_info, 141, 103, get_pixel(bitmap_info, 141, 103), get_pixel(bitmap_info, 136, 100));
+			//fill4(bitmap_info, 147, 100, get_pixel(bitmap_info, 147, 100), get_pixel(bitmap_info, 136, 100));
+			//aphics_release_frame_buffer(ctx, fb);
 		}
 		else
 			graphics_draw_text(ctx, CfgData.w_icon, WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2, rc.origin.y+rc.size.h/2-sz.h/2, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
@@ -389,8 +390,14 @@ void tick_handler(struct tm *tick_time, TimeUnits units_changed)
 		s_SSSub = s_SS*CfgData.substep; //Correct the Sec Hand
 	
 	if (s_SS == 0 || units_changed == MINUTE_UNIT)
+	{
 		update_all();
-	else if (false) //Weather Icon test
+		
+		//Hourly vibrate
+		if (CfgData.vibr && tick_time->tm_min == 0)
+			vibes_double_pulse();
+	}
+	else if (false && s_MultiMode == 2) //Weather Icon test
 	{
 		char Icons[] = "I\"!-$+F9=N#!-$,F9>h";
 		CfgData.w_icon[0] = Icons[s_SS % 19];
@@ -488,14 +495,15 @@ static void update_configuration(void)
 	bluetooth_connection_handler(bluetooth_connection_service_peek());
 
 	//Enable Light on Debug
-	light_enable(true);
+	//light_enable(true);
 }
 //-----------------------------------------------------------------------------------------------------------------------
 void in_received_handler(DictionaryIterator *received, void *context) 
 {
 	app_log(APP_LOG_LEVEL_DEBUG, __FILE__, __LINE__, "Received Data: ");
     time_t tmAkt = time(NULL);
-	
+
+	bool bSafeConfig = false;
 	Tuple *akt_tuple = dict_read_first(received);
     while (akt_tuple)
     {
@@ -507,6 +515,7 @@ void in_received_handler(DictionaryIterator *received, void *context)
 			w_UpdateRetry = true;
 			break;
 		case C_INV:
+			bSafeConfig = true;
 			CfgData.inv = strcmp(akt_tuple->value->cstring, "yes") == 0;
 			break;
 		case C_AUTO_SW:
@@ -550,6 +559,7 @@ void in_received_handler(DictionaryIterator *received, void *context)
 			CfgData.cityid = intVal;
 			break;
 		case W_TEMP:
+			bSafeConfig = true;
 			CfgData.w_time = tmAkt;
 			CfgData.w_temp = intVal;
 			w_UpdateRetry = false; //Update successful, usual update wait time
@@ -571,9 +581,12 @@ void in_received_handler(DictionaryIterator *received, void *context)
 	}
 	
 	//Save Configuration
-	int result = persist_write_data(PK_SETTINGS, &CfgData, sizeof(CfgData));
-	app_log(APP_LOG_LEVEL_DEBUG, __FILE__, __LINE__, "Wrote %d bytes into settings", result);
-	update_configuration();
+	if (bSafeConfig)
+	{
+		int result = persist_write_data(PK_SETTINGS, &CfgData, sizeof(CfgData));
+		app_log(APP_LOG_LEVEL_DEBUG, __FILE__, __LINE__, "Wrote %d bytes into settings", result);
+		update_configuration();
+	}
 	
 	//Update Weather
 	if (w_UpdateRetry)
@@ -644,7 +657,7 @@ void main_window_unload(Window *window)
 //-----------------------------------------------------------------------------------------------------------------------
 void handle_init(void) 
 {
-	s_MultiMode = 2;
+	s_MultiMode = 0;
 	w_UpdateRetry = false; //Wait for JS_READY
 	s_biBackground.bitmap = NULL;
 	
