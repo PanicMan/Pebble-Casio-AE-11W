@@ -1,10 +1,10 @@
 var initialised = false;
-var CityID = 0, posLat = "0", posLon = "0", lang = "en";
+var CityID = 0, posLat = "0", posLon = "0", lang = "en", colorpbl=0;
 var weatherIcon = {
     "01d" : 'I',
     "02d" : '"',
     "03d" : '!',
-    "04d" : '-',
+    "04d" : 'k',
     "09d" : '$',
     "10d" : '+',
     "11d" : 'F',
@@ -13,7 +13,7 @@ var weatherIcon = {
     "01n" : 'N',
     "02n" : '#',
     "03n" : '!',
-    "04n" : '-',
+    "04n" : 'k',
     "09n" : '$',
     "10n" : ',',
     "11n" : 'F',
@@ -32,6 +32,8 @@ Pebble.addEventListener("ready", function() {
 		try {
 			var watch = Pebble.getActiveWatchInfo();
 			p_lang = watch.language;
+			if (watch.platform === 'basalt')
+				colorpbl = 1;
 		} catch(err) {
 			console.log("Pebble.getActiveWatchInfo(); Error!");
 		}
@@ -50,7 +52,7 @@ Pebble.addEventListener("ready", function() {
 	else
 		lang = "en";
 	
-	console.log("JavaScript app ready and running!");
+	console.log("JavaScript app ready and running! Lang: "+lang+", ColorPebble: "+colorpbl);
 	sendMessageToPebble({"JS_READY": 1});		
 });
 //-----------------------------------------------------------------------------------------------------------------------
@@ -138,18 +140,22 @@ Pebble.addEventListener("showConfiguration", function() {
     var options = JSON.parse(localStorage.getItem('cas_ae_11w_opt'));
     console.log("read options: " + JSON.stringify(options));
     console.log("showing configuration");
-	var uri = 'http://panicman.github.io/config_casioae11w.html?title=Casio%20AE-11W%20v1.2';
+	var uri = 'http://panicman.github.io/config_casioae11w.html?title=Casio%20AE-11W%20v1.3';
     if (options !== null) {
         uri +=
+			'&colorpbl=' + colorpbl + 
 			'&c_inv=' + encodeURIComponent(options.c_inv) + 
 			'&c_auto_sw=' + encodeURIComponent(options.c_auto_sw) +
 			'&c_vibr=' + encodeURIComponent(options.c_vibr) + 
 			'&c_vibr_bt=' + encodeURIComponent(options.c_vibr_bt) + 
 			'&c_showsec=' + encodeURIComponent(options.c_showsec) + 
 			'&c_datefmt=' + encodeURIComponent(options.c_datefmt) + 
+			'&c_dualdiff=' + encodeURIComponent(options.c_dualdiff) + 
 			'&c_weather=' + encodeURIComponent(options.c_weather) + 
 			'&c_units=' + encodeURIComponent(options.c_units) + 
-			'&c_cityid=' + encodeURIComponent(options.c_cityid);
+			'&c_cityid=' + encodeURIComponent(options.c_cityid) + 
+			'&c_colsec=' + encodeURIComponent(options.c_colsec) + 
+			'&c_colbrd=' + encodeURIComponent(options.c_colbrd);
     }
 	console.log("Uri: "+uri);
     Pebble.openURL(uri);

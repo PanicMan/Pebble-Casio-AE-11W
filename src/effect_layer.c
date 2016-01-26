@@ -86,10 +86,27 @@ void effect_layer_add_effect(EffectLayer *effect_layer, effect_cb* effect, void*
 }
 
 //removes last added effect
-void effect_layer_remove_effect(EffectLayer *effect_layer) {
+void effect_layer_remove_last_effect(EffectLayer *effect_layer) {
   if(effect_layer->next_effect > 0) {
     effect_layer->effects[effect_layer->next_effect - 1] = NULL;
     effect_layer->params[effect_layer->next_effect - 1] = NULL;  
     --effect_layer->next_effect;
+  }
+}
+
+//removes effect
+void effect_layer_remove_effect(EffectLayer *effect_layer, effect_cb* effect) {
+  if(effect_layer->next_effect > 0) {
+    bool bFound = false;
+	  for (uint8_t i=0; i<MAX_EFFECTS; i++)
+        if (!bFound && effect_layer->effects[i] == effect) {
+          bFound = true;
+          effect_layer->effects[i] = NULL;
+          --effect_layer->next_effect;
+        }
+        else if (bFound && i<MAX_EFFECTS-1)
+          effect_layer->effects[i-1] = effect_layer->effects[i];
+        else if (bFound) //we are on the last position
+          effect_layer->effects[i] = NULL;
   }
 }

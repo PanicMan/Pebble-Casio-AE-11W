@@ -12,6 +12,9 @@ enum ConfigKeys {
 	C_WEATHER=7,
 	C_UNITS=8,
 	C_CITYID=9,
+	C_COLSEC=10,
+	C_COLBRD=11,
+	C_DUALDIFF=12,
 	W_TIME=90,
 	W_TEMP=91,
 	W_ICON=92,
@@ -24,21 +27,25 @@ enum StorrageKeys {
 };
 
 typedef struct {
-	bool inv, automode;
+	bool inv, automode, shakemode;
 	bool vibr, vibr_bt;
-	uint8_t datefmt, substep, showsec;
+	uint8_t datefmt, substep, showsec, multimode;
 	bool weather, isunit;
 	uint32_t cityid, w_time;
-	int16_t w_temp;
+	int16_t w_temp, dualdiff;
 	char w_icon[2], w_city[50], w_cond[50];
+	GColor colsec, colbrd;
 } __attribute__((__packed__)) CfgDta_t;
 
 static CfgDta_t CfgData = {
 	.inv = false,
 	.automode = true,
+	.shakemode = false,
+	.multimode = 0,
 	.vibr = false,
 	.vibr_bt = true,
 	.datefmt = 0,
+	.dualdiff = 0,
 	.substep = 1,
 	.showsec = 1,
 	.weather = true,
@@ -48,14 +55,15 @@ static CfgDta_t CfgData = {
 	.w_temp = 0,
 	.w_icon = " ",
 	.w_city = "",
-	.w_cond = ""
+	.w_cond = "",
 };
 
 Window *window, *window_sec;
 Layer *clock_layer, *second_layer, *multi_layer;
 EffectLayer *inv_layer;
+EffectColorpair inf_layer_colorize;
 
-static uint8_t s_HH, s_MM, s_SS, s_MultiMode, s_CurrBatt;
+static uint8_t s_HH, s_MM, s_SS, s_CurrBatt;
 static uint16_t s_SSSub;
 static AppTimer *timer_subsec, *timer_weather;
 static GBitmap *s_bmpBottom;
@@ -77,6 +85,33 @@ static const VibePattern vibe_pat_bt = {
 	.num_segments = ARRAY_LENGTH(segments_bt),
 };
 
+//-----------------------------------------------------------------------------------------------------------------------
+GColor COLOR_INVERT(GColor col, bool bInvert)
+{
+	if (!bInvert) return col;
+	
+#ifdef PBL_COLOR // on Basalt simple doing NOT on entire returned byte/pixel
+	col.argb = (~col.argb)|((uint8_t)0b11000000);
+	return col;
+#else // on Aplite since only 1 and 0 is returning, doing "not" by 1 - pixel
+	return col.argb == GColorBlack.argb ? GColorWhite : GColorBlack;
+#endif
+}
+//-----------------------------------------------------------------------------------------------------------------------
+uint32_t HexToInt(char* hexstring)
+{
+	uint32_t nRet = 0, nPow;
+	uint8_t len = strlen(hexstring), rem = 0;
+	if (len >= 2 && (hexstring[1] == 'x' || hexstring[1] == 'X')) rem = 2; //remove 0x
+	for (uint8_t i=0; i<len-rem; i++) {
+		char x = hexstring[len-i-1];
+		uint8_t num = (x >= '0' && x <= '9') ? x-'0' : (x >= 'A' && x <= 'F') ? x-'A'+10 : x-'a'+10;
+		if (i == 0 || num == 0) nPow = 1; 								//16^0
+		else { nPow = 16; for (uint8_t j=0; j<i-1; j++) nPow *= 16; }	//16^i
+		nRet += nPow*num;
+	}
+	return nRet;
+}
 //-----------------------------------------------------------------------------------------------------------------------
 char *upcase(char *str) {
     for (int i = 0; str[i] != 0; i++) {
@@ -125,7 +160,7 @@ static void clock_update_proc(Layer *layer, GContext *ctx)
 #endif
 	
 	//Frame and center
-	graphics_context_set_fill_color(ctx, CfgData.inv ? GColorWhite : GColorBlack);
+	graphics_context_set_fill_color(ctx, COLOR_INVERT(COLOR_FALLBACK(CfgData.colbrd, GColorBlack), CfgData.inv));
 	graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 	graphics_context_set_fill_color(ctx, CfgData.inv ? GColorBlack : GColorWhite);
 	graphics_fill_rect(ctx, GRect(4, 4, bounds.size.w-8, bounds.size.h-8), 5, GCornersAll);
@@ -207,7 +242,7 @@ static void secwnd_update_proc(Layer *layer, GContext *ctx)
 		graphics_draw_bitmap_in_rect(ctx, s_biBackground.bitmap, GRect(0, 0, bg_size.w, bg_size.h));
 	}
 	
-	if (s_MultiMode == 0 && (s_SSSub % CfgData.substep) == 0)
+	if (CfgData.multimode == 0 && (s_SSSub % CfgData.substep) == 0)
 	{
 		graphics_context_set_fill_color(ctx, CfgData.inv ? GColorBlack : GColorWhite);
 		graphics_fill_rect(ctx, GRect(99, 133, 26, 22), 0, GCornerNone);
@@ -220,8 +255,8 @@ static void second_update_proc(Layer *layer, GContext *ctx)
 	GRect bounds = GRect(0, 0, 144, 121);
 	GPoint center = grect_center_point(&bounds);
 	
-	graphics_context_set_stroke_color(ctx, CfgData.inv ? GColorWhite : GColorBlack);
-	graphics_context_set_fill_color(ctx, CfgData.inv ? GColorWhite : GColorBlack);
+	graphics_context_set_stroke_color(ctx, COLOR_INVERT(COLOR_FALLBACK(CfgData.colsec, GColorBlack), CfgData.inv));
+	graphics_context_set_fill_color(ctx, COLOR_INVERT(COLOR_FALLBACK(CfgData.colsec, GColorBlack), CfgData.inv));
 	
 	//Second Arrow
 	gpath_move_to(hour_arrow, center);
@@ -233,8 +268,8 @@ static void second_update_proc(Layer *layer, GContext *ctx)
 	gpath_draw_filled(ctx, minute_arrow);
 	gpath_draw_outline(ctx, minute_arrow);
 	
-	//Seconds
-	if (s_MultiMode == 0 && (s_SSSub % CfgData.substep) == 0)
+	//Second Digits
+	if (CfgData.multimode == 0 && (s_SSSub % CfgData.substep) == 0)
 	{
 		bounds = GRect(0, 121, 144, 168-121);
 		center = grect_center_point(&bounds);
@@ -254,7 +289,7 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 	const GPoint center = grect_center_point(&bounds);
 	
 	//Frame
-	graphics_context_set_fill_color(ctx, CfgData.inv ? GColorWhite : GColorBlack);
+	graphics_context_set_fill_color(ctx, COLOR_INVERT(COLOR_FALLBACK(CfgData.colbrd, GColorBlack), CfgData.inv));
 	graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 	graphics_context_set_fill_color(ctx, CfgData.inv ? GColorBlack : GColorWhite);
 	graphics_fill_rect(ctx, GRect(4, 1, bounds.size.w-8, bounds.size.h-8), 5, GCornersAll);
@@ -265,14 +300,17 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 	
 	//Different Modes
 	time_t tmAkt = time(NULL);
-	struct tm *t = localtime(&tmAkt);
 	char sTemp[] = "00:00:00";
 	
-	if (s_MultiMode == 0)
+	if (CfgData.multimode == 0)
 	{
 		graphics_draw_line(ctx, GPoint(25, bounds.size.h-9), GPoint(42, bounds.size.h-9));
+
+		//Add Time Difference
+		tmAkt = tmAkt+CfgData.dualdiff*60*60;
 		
 		//Hour+Minute
+		struct tm *t = localtime(&tmAkt);
 		if(clock_is_24h_style())
 			strftime(sTemp, sizeof(sTemp), "%H:%M", t);
 		else
@@ -290,11 +328,12 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 		sz = graphics_text_layout_get_content_size(sTemp, digitS, bounds, GTextOverflowModeFill, GTextAlignmentCenter);
 		graphics_draw_text(ctx, sTemp, digitS, GRect(8, 4, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 	} 
-	else if (s_MultiMode == 1)
+	else if (CfgData.multimode == 1)
 	{
 		graphics_draw_line(ctx, GPoint(63, bounds.size.h-9), GPoint(79, bounds.size.h-9));
 		
 		//Date
+		struct tm *t = localtime(&tmAkt);
 		strftime(sTemp, sizeof(sTemp), 
 			CfgData.datefmt == 1 ? "%d-%m" : 
 			CfgData.datefmt == 2 ? "%d/%m" : 
@@ -314,7 +353,7 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 		sz = graphics_text_layout_get_content_size(sTemp2, digitM, bounds, GTextOverflowModeFill, GTextAlignmentCenter);
 		graphics_draw_text(ctx, sTemp2, digitM, GRect(center.x-sz.w/2+45, center.y-sz.h/2-5, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 	}
-	else //if (s_MultiMode == 2)
+	else //if (CfgData.multimode == 2)
 	{
 		graphics_draw_line(ctx, GPoint(95, bounds.size.h-9), GPoint(126, bounds.size.h-9));
 		
@@ -322,31 +361,17 @@ static void multi_update_proc(Layer *layer, GContext *ctx)
 		graphics_draw_text(ctx, sTemp, digitM, GRect(center.x-70, center.y-20 + (CfgData.weather ? 5 : 0), 55, 32), GTextOverflowModeFill, GTextAlignmentRight, NULL);
 		graphics_draw_text(ctx, CfgData.isunit ? "`" : "_", WeatherF, GRect(center.x-13, center.y-26 + (CfgData.weather ? 5 : 0), 18, 32), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 
-		GRect rc = GRect(center.x+15, center.y-20 + (CfgData.weather ? 0 : 0), 34, 34);
+		GRect rc = GRect(center.x+15, center.y-20, 34, 34);
 		GSize sz = graphics_text_layout_get_content_size(CfgData.w_icon, WeatherF, rc, GTextOverflowModeFill, GTextAlignmentCenter);
-
-		if (strcmp(CfgData.w_icon, "-") == 0) //Simulate Dark Clouds
-		{
-			graphics_draw_text(ctx, "!", WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2, rc.origin.y+rc.size.h/2-sz.h/2, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
-			graphics_draw_text(ctx, "!", WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2+4, rc.origin.y+rc.size.h/2-sz.h/2-4, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
-			
-			//Fill front Cloud, disabled, as it crash on real pebble
-			//itmap *fb = graphics_capture_frame_buffer(ctx);
-			//tmapInfo bitmap_info = fill_bitmapinfo(fb);
-			//fill4(bitmap_info, 141, 103, get_pixel(bitmap_info, 141, 103), get_pixel(bitmap_info, 136, 100));
-			//fill4(bitmap_info, 147, 100, get_pixel(bitmap_info, 147, 100), get_pixel(bitmap_info, 136, 100));
-			//aphics_release_frame_buffer(ctx, fb);
-		}
-		else
-			graphics_draw_text(ctx, CfgData.w_icon, WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2, rc.origin.y+rc.size.h/2-sz.h/2, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+		graphics_draw_text(ctx, CfgData.w_icon, WeatherF, GRect(rc.origin.x+rc.size.w/2-sz.w/2, rc.origin.y+rc.size.h/2-sz.h/2, sz.w, sz.h), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 
 		//Condition
 		if (CfgData.weather)
 		{
 			//snprintf(CfgData.w_cond, sizeof(CfgData.w_cond), "Langer Text %dx%d mit haufen anderen zeichen", sz.w, sz.h);
 			sz = graphics_text_layout_get_content_size(CfgData.w_cond, digitS, GRect(10, 0, bounds.size.w-20, 10), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft);
-			graphics_fill_rect(ctx, GRect(10, 1, sz.w, sz.h), 0, GCornerNone);
-			graphics_draw_text(ctx, CfgData.w_cond, digitS, GRect(10, 0, sz.w, sz.h), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+			graphics_fill_rect(ctx, GRect(10, 2, sz.w, sz.h), 0, GCornerNone);
+			graphics_draw_text(ctx, CfgData.w_cond, digitS, GRect(10, 1, sz.w, sz.h), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
 		}
 	}
 }
@@ -379,7 +404,7 @@ void tick_handler(struct tm *tick_time, TimeUnits units_changed)
 	//Moduswechsel alle 10 sec
 	if (CfgData.automode && (s_SS % 10) == 0)
 	{
-		s_MultiMode = s_MultiMode < 2 ? s_MultiMode+1 : 0;
+		CfgData.multimode = CfgData.multimode < 2 ? CfgData.multimode+1 : 0;
 	
 		if (s_SS != 0) //Update done below
 			update_all();
@@ -397,10 +422,10 @@ void tick_handler(struct tm *tick_time, TimeUnits units_changed)
 		if (CfgData.vibr && tick_time->tm_min == 0)
 			vibes_double_pulse();
 	}
-	else if (false && s_MultiMode == 2) //Weather Icon test
+	else if (false && CfgData.multimode == 2) //Weather Icon test
 	{
-		char Icons[] = "I\"!-$+F9=N#!-$,F9>h";
-		CfgData.w_icon[0] = Icons[s_SS % 19];
+		char Icons[] = "I\"!k$+F9=N#,>`_h";
+		CfgData.w_icon[0] = Icons[s_SS % 17];
 		update_all();
 	}
 }
@@ -423,10 +448,7 @@ void bluetooth_connection_handler(bool connected)
 //-----------------------------------------------------------------------------------------------------------------------
 static void tap_handler(AccelAxisType axis, int32_t direction) 
 {
-	if (CfgData.automode)
-		return;
-
-	s_MultiMode = s_MultiMode < 2 ? s_MultiMode+1 : 0;
+	CfgData.multimode = CfgData.multimode < 2 ? CfgData.multimode+1 : 0;
 
 	update_all();	
 }
@@ -479,9 +501,17 @@ static void update_configuration(void)
 	if (CfgData.showsec != 0)
 		layer_add_child(window_layer, second_layer);	
 
-	layer_remove_from_parent(effect_layer_get_layer(inv_layer));
+	effect_layer_remove_effect(inv_layer, effect_colorize);
+	if (CfgData.colbrd.argb != GColorBlack.argb) 
+	{
+		inf_layer_colorize.firstColor = GColorBlack;
+		inf_layer_colorize.secondColor = CfgData.colbrd;
+		effect_layer_add_effect(inv_layer, effect_colorize, &inf_layer_colorize);
+	}
+	
+	effect_layer_remove_effect(inv_layer, effect_invert);
 	if (CfgData.inv)
-		layer_add_child(window_layer, effect_layer_get_layer(inv_layer));	
+		effect_layer_add_effect(inv_layer, effect_invert, NULL);	
 	
 	//Get a time structure so that it doesn't start blank
 	time_t tmAkt = time(NULL);
@@ -494,6 +524,11 @@ static void update_configuration(void)
 	//Set Bluetooth state
 	bluetooth_connection_handler(bluetooth_connection_service_peek());
 
+	//Subscribe Tap Service
+	accel_tap_service_unsubscribe();
+	if (CfgData.shakemode)
+		accel_tap_service_subscribe(&tap_handler);
+
 	//Enable Light on Debug
 	//light_enable(true);
 }
@@ -502,6 +537,7 @@ void in_received_handler(DictionaryIterator *received, void *context)
 {
 	app_log(APP_LOG_LEVEL_DEBUG, __FILE__, __LINE__, "Received Data: ");
     time_t tmAkt = time(NULL);
+	char colTmp[] = "000000";
 
 	bool bSafeConfig = false;
 	Tuple *akt_tuple = dict_read_first(received);
@@ -520,6 +556,11 @@ void in_received_handler(DictionaryIterator *received, void *context)
 			break;
 		case C_AUTO_SW:
 			CfgData.automode = strcmp(akt_tuple->value->cstring, "yes") == 0;
+			CfgData.shakemode = strcmp(akt_tuple->value->cstring, "no") == 0;
+			CfgData.multimode = 
+				strcmp(akt_tuple->value->cstring, "dual") == 0 ? 0 : 
+				strcmp(akt_tuple->value->cstring, "date") == 0 ? 1 : 
+				strcmp(akt_tuple->value->cstring, "wthr") == 0 ? 2 : CfgData.multimode;
 			break;
 		case C_VIBR:
 			CfgData.vibr = strcmp(akt_tuple->value->cstring, "yes") == 0;
@@ -543,6 +584,9 @@ void in_received_handler(DictionaryIterator *received, void *context)
 				strcmp(akt_tuple->value->cstring, "usa") == 0 ? 3 : 
 				strcmp(akt_tuple->value->cstring, "iso") == 0 ? 4 : 0;
 			break;
+		case C_DUALDIFF:
+			CfgData.dualdiff = intVal;
+			break;
 		case C_WEATHER:
 			CfgData.weather = strcmp(akt_tuple->value->cstring, "yes") == 0;
 			break;
@@ -557,6 +601,14 @@ void in_received_handler(DictionaryIterator *received, void *context)
 			}
 
 			CfgData.cityid = intVal;
+			break;
+		case C_COLSEC:
+			strcpy(colTmp, akt_tuple->value->cstring);
+			CfgData.colsec = GColorFromHEX(HexToInt(colTmp));
+			break;
+		case C_COLBRD:
+			strcpy(colTmp, akt_tuple->value->cstring);
+			CfgData.colbrd = GColorFromHEX(HexToInt(colTmp));
 			break;
 		case W_TEMP:
 			bSafeConfig = true;
@@ -634,8 +686,8 @@ void main_window_load(Window *window)
 	
 	//Inverter Tayer
 	inv_layer = effect_layer_create(GRect(25, bounds.size.h-6, 102, 5));
-	effect_layer_add_effect(inv_layer, effect_invert_bw_only, NULL);
-
+	layer_add_child(window_layer, effect_layer_get_layer(inv_layer));
+	
 	//Set active Configuration
 	update_configuration();
 	
@@ -657,9 +709,10 @@ void main_window_unload(Window *window)
 //-----------------------------------------------------------------------------------------------------------------------
 void handle_init(void) 
 {
-	s_MultiMode = 0;
 	w_UpdateRetry = false; //Wait for JS_READY
 	s_biBackground.bitmap = NULL;
+	CfgData.colsec = GColorRed;
+	CfgData.colbrd = GColorBlack;
 	
 	char* sLocale = setlocale(LC_TIME, ""), sLang[3];
 	if (strncmp(sLocale, "en", 2) == 0)
@@ -693,7 +746,6 @@ void handle_init(void)
 	tick_timer_service_subscribe(SECOND_UNIT, (TickHandler)tick_handler);
 	battery_state_service_subscribe(&battery_state_service_handler);
 	bluetooth_connection_service_subscribe(&bluetooth_connection_handler);
-	accel_tap_service_subscribe(&tap_handler);
 	
 	//Subscribe messages
 	app_message_register_inbox_received(in_received_handler);
@@ -707,7 +759,6 @@ void handle_deinit(void)
 	tick_timer_service_unsubscribe();
 	battery_state_service_unsubscribe();
 	bluetooth_connection_service_unsubscribe();
-	accel_tap_service_unsubscribe();
 
 	layer_destroy(second_layer);
   	window_destroy(window_sec);
